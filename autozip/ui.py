@@ -30,6 +30,7 @@ class AutoZipApp(tk.Tk):
 
         self.selected_files: list[Path] = []
         self.selected_folder: Path | None = None
+        self.excluded_archives: set[Path] = set()
         self.preview_jobs: list[ExtractionJob] = []
         self.event_queue = Queue()
         self.running = False
@@ -186,7 +187,10 @@ class AutoZipApp(tk.Tk):
             command=self._start_extraction,
         )
         self.run_button.grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ttk.Button(action_row, text="Обновить список", command=self._refresh_preview).grid(row=0, column=1, sticky="w")
+        ttk.Button(action_row, text="Убрать из списка", command=self._remove_selected_archives).grid(
+            row=0, column=1, sticky="w", padx=(0, 8)
+        )
+        ttk.Button(action_row, text="Обновить список", command=self._refresh_preview).grid(row=0, column=2, sticky="w")
 
         preview_card = ttk.LabelFrame(container, text="Список задач", style="Card.TLabelframe", padding=14)
         preview_card.grid(row=2, column=0, columnspan=2, sticky="nsew")
@@ -206,6 +210,7 @@ class AutoZipApp(tk.Tk):
         self.tree.column("target", width=280)
         self.tree.column("status", width=120, anchor="center")
         self.tree.column("message", width=260)
+        self.tree.bind("<Delete>", lambda _: self._remove_selected_archives())
 
         scrollbar = ttk.Scrollbar(preview_card, orient="vertical", command=self.tree.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
@@ -232,6 +237,7 @@ class AutoZipApp(tk.Tk):
             return
         self.selected_files = [Path(path) for path in raw_paths]
         self.selected_folder = None
+        self.excluded_archives.clear()
         self._refresh_preview()
 
     def _choose_folder(self) -> None:
@@ -240,6 +246,7 @@ class AutoZipApp(tk.Tk):
             return
         self.selected_folder = Path(selected)
         self.selected_files = []
+        self.excluded_archives.clear()
         self._refresh_preview()
 
     def _choose_destination(self) -> None:
@@ -252,6 +259,7 @@ class AutoZipApp(tk.Tk):
     def _clear_source(self) -> None:
         self.selected_files = []
         self.selected_folder = None
+        self.excluded_archives.clear()
         self.preview_jobs = []
         self.source_summary_var.set("Источник не выбран.")
         self.status_var.set("Выберите архивы или папку с архивами.")
@@ -279,6 +287,7 @@ class AutoZipApp(tk.Tk):
     def _collect_archives(self) -> list[Path]:
         if self.selected_folder is not None:
             archives = discover_archives_in_directory(self.selected_folder, recursive=self.recursive_var.get())
+            archives = [path for path in archives if path not in self.excluded_archives]
             if self.recursive_var.get():
                 scope_text = "с подпапками"
             else:
@@ -290,6 +299,7 @@ class AutoZipApp(tk.Tk):
 
         if self.selected_files:
             archives = filter_supported_archives(self.selected_files)
+            archives = [path for path in archives if path not in self.excluded_archives]
             ignored = len(self.selected_files) - len(archives)
             self.source_summary_var.set(
                 f"Выбрано файлов: {len(self.selected_files)}. Подходящих архивов: {len(archives)}. "
@@ -339,6 +349,18 @@ class AutoZipApp(tk.Tk):
     def _clear_tree(self) -> None:
         for item_id in self.tree.get_children():
             self.tree.delete(item_id)
+
+    def _remove_selected_archives(self) -> None:
+        if self.running:
+            return
+
+        selected_items = self.tree.selection()
+        if not selected_items:
+            return
+
+        self.excluded_archives.update(Path(item_id) for item_id in selected_items)
+        self._refresh_preview()
+        self.status_var.set(f"Убрано из списка: {len(selected_items)}.")
 
     def _start_extraction(self) -> None:
         if self.running:
